@@ -123,27 +123,17 @@ class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, doma
                     master = await self.hass.async_add_executor_job(
                         obtain_master_token, email, temporary, device_id
                     )
-                    await self._validate_native(
-                        {
-                            CONF_EMAIL: email,
-                            CONF_MASTER_TOKEN: master,
-                            CONF_DEVICE_ID: device_id,
-                        }
-                    )
-                except WrongAccount:
-                    errors["base"] = "wrong_account_browser"
                 except NativeAuthError:
                     errors["base"] = "invalid_browser_token"
                 except TasksError:
                     errors["base"] = "browser_cannot_connect"
                 else:
-                    return self._finish_native(
-                        {
-                            CONF_EMAIL: email,
-                            CONF_MASTER_TOKEN: master,
-                            CONF_DEVICE_ID: device_id,
-                        }
-                    )
+                    self._pending_native = {
+                        CONF_EMAIL: email,
+                        CONF_MASTER_TOKEN: master,
+                        CONF_DEVICE_ID: device_id,
+                    }
+                    return await self.async_step_browser_verify()
         return self.async_show_form(
             step_id="browser_token",
             errors=errors,
@@ -163,6 +153,27 @@ class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, doma
             ),
         )
 
+    async def async_step_browser_verify(self, user_input=None):
+        """Retry verification using the exchanged master token, without replaying a cookie."""
+        try:
+            await self._validate_native(self._pending_native)
+        except WrongAccount:
+            self._pending_native = None
+            result = await self.async_step_browser_token()
+            result["errors"] = {"base": "wrong_account_browser"}
+            return result
+        except NativeAuthError:
+            self._pending_native = None
+            result = await self.async_step_browser_token()
+            result["errors"] = {"base": "invalid_browser_token"}
+            return result
+        except TasksError:
+            return self.async_show_form(
+                step_id="browser_verify", errors={"base": "verification_unavailable"}
+            )
+        data, self._pending_native = self._pending_native, None
+        return self._finish_native(data)
+
     async def _validate_native(self, data):
         native = NativeClient(
             self.hass,
@@ -171,7 +182,7 @@ class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, doma
             data[CONF_MASTER_TOKEN],
             data[CONF_DEVICE_ID],
         )
-        native.validate_account(await native.read(), self._lists)
+        await native.check_account(await native.read(), self._lists)
 
     def _finish_native(self, native_data):
         data = {**self._oauth_data, **native_data, CONF_ACCOUNT_ID: self._info["id"]}

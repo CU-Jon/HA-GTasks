@@ -15,6 +15,10 @@ class WrongAccount(TasksError):
     """OAuth and native credentials belong to different Google accounts."""
 
 
+class AccountVerificationError(TasksError):
+    """The available API data could not establish account identity."""
+
+
 class OutcomeUnknown(TasksError):
     """A write may have landed; never replay it automatically."""
 

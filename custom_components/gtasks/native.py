@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import logging
 import time
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
@@ -10,8 +11,14 @@ import aiohttp
 import gpsoauth
 import requests
 
-from .const import NETWORK_TIMEOUT, SYNC_URL, TASKS_APP, TASKS_CERT, TASKS_SCOPE
-from .exceptions import NativeAuthError, OutcomeUnknown, TasksError, WrongAccount
+from .const import NETWORK_TIMEOUT, SYNC_URL, TASKS_APP, TASKS_CERT, TASKS_SCOPE, TASKS_URL
+from .exceptions import (
+    AccountVerificationError,
+    NativeAuthError,
+    OutcomeUnknown,
+    TasksError,
+    WrongAccount,
+)
 from .protocol import (
     ProtocolError,
     Schedule,
@@ -21,6 +28,8 @@ from .protocol import (
     make_schedule,
     sync_read_body,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def public_id(value: str) -> str:
@@ -198,18 +207,94 @@ class NativeClient:
     def validate_account(self, snapshot: Snapshot, public_lists=()):
         # Match opaque list IDs independently obtained from OAuth. Do not infer
         # account identity from undocumented fields on a task record.
-        if not snapshot.list_ids.intersection(private_id(v) for v in public_lists):
-            raise WrongAccount("Could not match native credentials to the OAuth account.")
+        candidates = set()
+        for value in public_lists:
+            candidates.add(value)
+            try:
+                candidates.add(private_id(value))
+            except TasksError:
+                pass  # Public identifiers are opaque, not guaranteed to be base64.
+        if not snapshot.list_ids.intersection(candidates):
+            raise AccountVerificationError(
+                "Private list identifiers could not establish account identity."
+            )
+
+    async def check_account(self, snapshot: Snapshot, public_lists):
+        """Use identical public IDs when private identifiers cannot establish a match."""
+        expected = set(public_lists)
+        try:
+            self.validate_account(snapshot, expected)
+            return
+        except AccountVerificationError:
+            _LOGGER.debug(
+                "Checking account through public Tasks API: "
+                "oauth_lists=%d native_lists=%d native_tasks=%d",
+                len(expected),
+                len(snapshot.list_ids),
+                len(snapshot.tasks),
+            )
+        if not expected:
+            raise AccountVerificationError("OAuth returned no task lists to verify.")
+        token = await self._access_token()
+        seen = set()
+        page = None
+        found = set()
+        try:
+            while True:
+                async with self.session.get(
+                    TASKS_URL + "/users/@me/lists",
+                    params={"maxResults": 100, **({"pageToken": page} if page else {})},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=aiohttp.ClientTimeout(total=NETWORK_TIMEOUT),
+                    allow_redirects=False,
+                ) as response:
+                    if response.status != 200:
+                        _LOGGER.warning(
+                            "Native account verification unavailable: HTTP %d; "
+                            "oauth_lists=%d native_lists=%d native_tasks=%d",
+                            response.status,
+                            len(expected),
+                            len(snapshot.list_ids),
+                            len(snapshot.tasks),
+                        )
+                        raise AccountVerificationError(
+                            "Google could not verify native account access."
+                        )
+                    data = await response.json()
+                if not isinstance(data, dict) or not isinstance(data.get("items", []), list):
+                    raise ValueError
+                found.update(item["id"] for item in data.get("items", []))
+                if found.intersection(expected):
+                    return
+                page = data.get("nextPageToken")
+                if not page:
+                    break
+                if not isinstance(page, str) or page in seen:
+                    raise ValueError
+                seen.add(page)
+        except aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError:
+            raise AccountVerificationError(
+                "Could not read task lists for account verification."
+            ) from None
+        if not found:
+            raise AccountVerificationError("Native authorization returned no task lists to verify.")
+        raise WrongAccount("The native token's task lists belong to a different Google account.")
 
     async def read(self):
         return await self._post(sync_read_body())
 
     @staticmethod
     def find(snapshot, task_id, list_id):
-        record = snapshot.tasks.get(private_id(task_id))
-        if record is None or record.list_id != private_id(list_id):
+        task_ids, list_ids = {task_id}, {list_id}
+        for value, candidates in ((task_id, task_ids), (list_id, list_ids)):
+            try:
+                candidates.add(private_id(value))
+            except TasksError:
+                pass
+        records = [snapshot.tasks[key] for key in task_ids if key in snapshot.tasks]
+        if len(records) != 1 or records[0].list_id not in list_ids:
             raise TasksError("Task is not yet visible in native Tasks; refresh the list.")
-        return record
+        return records[0]
 
     async def set_schedule(self, list_id, task_id, desired):
         snapshot = await self.read()

@@ -48,6 +48,7 @@ async def test_guided_success(hass, credentials, oauth_info):
         patch("custom_components.gtasks.async_setup_entry", new_callable=AsyncMock),
     ):
         native.return_value.read = AsyncMock()
+        native.return_value.check_account = AsyncMock()
         result = await hass.config_entries.flow.async_configure(result["flow_id"], COOKIE)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     data = result["data"]
@@ -56,14 +57,14 @@ async def test_guided_success(hass, credentials, oauth_info):
     exchange.assert_called_once_with(COOKIE["email"], COOKIE["oauth_token"], data["device_id"])
     assert "oauth_token" not in data
     assert "temporary-test-cookie" not in str(data)
-    native.return_value.validate_account.assert_called_once()
+    native.return_value.check_account.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
     "error,expected",
     [
         (NativeAuthError("safe"), "invalid_browser_token"),
-        (TasksError("safe"), "browser_cannot_connect"),
+        (TasksError("safe"), "verification_unavailable"),
         (WrongAccount("safe"), "wrong_account_browser"),
     ],
 )
@@ -115,8 +116,34 @@ async def test_reconfigure_guided_replaces_credentials(hass, entry, credentials,
         patch("homeassistant.config_entries.ConfigEntries.async_reload", return_value=True),
     ):
         native.return_value.read = AsyncMock()
+        native.return_value.check_account = AsyncMock()
         result = await hass.config_entries.flow.async_configure(result["flow_id"], COOKIE)
     assert result["reason"] == "reconfigure_successful"
     assert entry.data["master_token"] == "replacement-master"
     assert entry.data["device_id"] != ENTRY_DATA["device_id"]
     assert "oauth_token" not in entry.data
+
+
+async def test_verification_retry_does_not_reexchange_cookie(hass, credentials, oauth_info):
+    result = await start_guided(hass, credentials)
+    with (
+        patch(
+            "custom_components.gtasks.config_flow.obtain_master_token",
+            return_value="pending-test-master",
+        ) as exchange,
+        patch("custom_components.gtasks.config_flow.NativeClient") as native,
+        patch("custom_components.gtasks.async_setup_entry", new_callable=AsyncMock),
+    ):
+        native.return_value.read = AsyncMock(
+            side_effect=[TasksError("network unavailable"), object()]
+        )
+        native.return_value.check_account = AsyncMock()
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], COOKIE)
+        assert result["step_id"] == "browser_verify"
+        assert "pending-test-master" not in str(result)
+        assert "temporary-test-cookie" not in str(result)
+        assert not hass.config_entries.async_entries("gtasks")
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["master_token"] == "pending-test-master"
+    exchange.assert_called_once()

@@ -38,6 +38,7 @@ async def api(hass, aioclient_mock):
     oauth.async_ensure_token_valid = AsyncMock()
     native = MagicMock()
     native.read = AsyncMock(return_value=snapshot())
+    native.check_account = AsyncMock()
     native.find = NativeClient.find
     native.set_schedule = AsyncMock()
     return TasksApi(async_get_clientsession(hass), oauth, native, "America/New_York")
@@ -53,7 +54,7 @@ async def test_pagination_and_overlay(api, aioclient_mock):
     )
     lists, tasks = await api.refresh()
     assert tasks[LIST_ID][0]["_native_due"] == DUE
-    api.native.validate_account.assert_called_once()
+    api.native.check_account.assert_awaited_once()
     api.native.read.assert_awaited_once()
     assert len(lists) == 1
 

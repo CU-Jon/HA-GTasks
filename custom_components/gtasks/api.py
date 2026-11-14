@@ -83,7 +83,7 @@ class TasksApi:
                     {"showCompleted": "true", "showHidden": "true", "showDeleted": "false"},
                 )
             snapshot = await self.native.read()
-            self.native.validate_account(snapshot, (item["id"] for item in lists))
+            await self.native.check_account(snapshot, (item["id"] for item in lists))
             for list_id, records in tasks.items():
                 for item in records:
                     native = self.native.find(snapshot, item["id"], list_id)

@@ -53,6 +53,10 @@
         "data_description": {
           "oauth_token": "Copy the Value of oauth_token only. Do not paste your Google password, all cookies, or a HAR file."
         }
+      },
+      "browser_verify": {
+        "title": "Retry account verification",
+        "description": "Google accepted the temporary cookie and Home Assistant obtained a master token. Account verification could not finish. Select Submit to retry using that token; you do not need to copy another cookie. The token is kept only in this setup session until verification succeeds. Cancelling setup discards it."
       }
     },
     "error": {
@@ -62,7 +66,8 @@
       "wrong_account": "Use native credentials for the same Google account you authorized.",
       "invalid_browser_token": "Google rejected the temporary cookie or native authorization. Repeat Google sign-in to obtain a fresh oauth_token value, then submit it promptly.",
       "wrong_account_browser": "These credentials do not match the linked Google account. Sign in to the correct account and copy a fresh oauth_token value.",
-      "browser_cannot_connect": "Could not finish exchanging or verifying the token. The temporary cookie may have been consumed. Try again with a fresh oauth_token value."
+      "browser_cannot_connect": "Could not finish exchanging or verifying the token. The temporary cookie may have been consumed. Try again with a fresh oauth_token value.",
+      "verification_unavailable": "Could not verify native Tasks access. This does not establish an account mismatch. Select Submit to retry; check Home Assistant logs if it continues."
     },
     "abort": {
       "already_configured": "This Google account is already configured.",

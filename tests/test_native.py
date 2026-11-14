@@ -8,6 +8,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from custom_components.gtasks.const import SYNC_URL
 from custom_components.gtasks.exceptions import (
+    AccountVerificationError,
     NativeAuthError,
     OutcomeUnknown,
     TasksError,
@@ -32,12 +33,92 @@ async def native(hass, aioclient_mock):
 
 
 def test_wrong_account(native):
-    with pytest.raises(WrongAccount):
+    with pytest.raises(AccountVerificationError):
         native.validate_account(Snapshot({}, None, frozenset({"someone-else"})), [LIST_ID])
-    with pytest.raises(WrongAccount):
+    with pytest.raises(AccountVerificationError):
         native.validate_account(Snapshot({}, None), [LIST_ID])
     native.validate_account(Snapshot({}, None, list_ids=frozenset({"test-list"})), [LIST_ID])
     native.validate_account(snapshot(), [LIST_ID])
+
+
+async def test_renamed_default_list_verified_with_public_ids(native, aioclient_mock):
+    from custom_components.gtasks.const import TASKS_URL
+
+    native._access_token = AsyncMock(return_value="fake-token")
+    aioclient_mock.get(
+        TASKS_URL + "/users/@me/lists",
+        json={"items": [{"id": LIST_ID, "title": "Renamed default list"}]},
+    )
+    await native.check_account(
+        Snapshot({}, None, frozenset({"different-private-representation"})), [LIST_ID]
+    )
+    assert aioclient_mock.call_count == 1
+
+
+async def test_public_account_actually_mismatched(native, aioclient_mock):
+    from custom_components.gtasks.const import TASKS_URL
+
+    native._access_token = AsyncMock(return_value="fake-token")
+    aioclient_mock.get(
+        TASKS_URL + "/users/@me/lists", json={"items": [{"id": "other-account-list"}]}
+    )
+    with pytest.raises(WrongAccount):
+        await native.check_account(Snapshot({}, None), [LIST_ID])
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+async def test_unavailable_verification_is_not_wrong_account(
+    native, aioclient_mock, status, caplog
+):
+    from custom_components.gtasks.const import TASKS_URL
+
+    native._access_token = AsyncMock(return_value="fake-token")
+    aioclient_mock.get(
+        TASKS_URL + "/users/@me/lists", status=status, text="sensitive-provider-body"
+    )
+    with pytest.raises(AccountVerificationError):
+        await native.check_account(Snapshot({}, None), [LIST_ID])
+    assert "sensitive-provider-body" not in caplog.text
+    assert "fake-token" not in caplog.text
+
+
+async def test_private_id_match_needs_no_extra_request(native, aioclient_mock):
+    await native.check_account(snapshot(), [LIST_ID])
+    assert aioclient_mock.call_count == 0
+
+
+async def test_empty_public_response_cannot_prove_wrong_account(native, aioclient_mock):
+    from custom_components.gtasks.const import TASKS_URL
+
+    native._access_token = AsyncMock(return_value="fake-token")
+    aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={})
+    with pytest.raises(AccountVerificationError):
+        await native.check_account(Snapshot({}, None), [LIST_ID])
+
+
+async def test_verification_checks_later_pages(native, aioclient_mock):
+    from custom_components.gtasks.const import TASKS_URL
+
+    native._access_token = AsyncMock(return_value="fake-token")
+    aioclient_mock.get(
+        TASKS_URL + "/users/@me/lists",
+        params={"maxResults": 100, "pageToken": "next"},
+        json={"items": [{"id": LIST_ID}]},
+    )
+    aioclient_mock.get(
+        TASKS_URL + "/users/@me/lists",
+        params={"maxResults": 100},
+        json={"items": [{"id": "another-list"}], "nextPageToken": "next"},
+    )
+    await native.check_account(Snapshot({}, None), [LIST_ID])
+    assert aioclient_mock.call_count == 2
+
+
+def test_direct_public_identifiers(native):
+    native.validate_account(Snapshot({}, None, frozenset({LIST_ID})), [LIST_ID])
+    record = snapshot().tasks["test-task"]
+    direct = Snapshot({TASK_ID: replace(record, task_id=TASK_ID, list_id=LIST_ID)}, None)
+    assert native.find(direct, TASK_ID, LIST_ID).task_id == TASK_ID
 
 
 async def test_token_cache_and_refresh(native):

@@ -56,11 +56,12 @@ async def test_full_flow(hass, credentials, oauth_info):
         patch("custom_components.gtasks.async_setup_entry", new_callable=AsyncMock),
     ):
         native.return_value.read = AsyncMock()
+        native.return_value.check_account = AsyncMock()
         result = await hass.config_entries.flow.async_configure(result["flow_id"], NATIVE_INPUT)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["result"].unique_id == "account-123"
     assert result["data"]["master_token"] == ENTRY_DATA["master_token"]
-    native.return_value.validate_account.assert_called_once()
+    native.return_value.check_account.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -108,6 +109,7 @@ async def test_reauth_same_account(hass, entry, credentials, oauth_info):
         patch("homeassistant.config_entries.ConfigEntries.async_reload", return_value=True),
     ):
         native.return_value.read = AsyncMock()
+        native.return_value.check_account = AsyncMock()
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"email": ENTRY_DATA["email"], "device_id": ENTRY_DATA["device_id"]}
         )
@@ -144,6 +146,7 @@ async def test_reconfigure_keeps_secret(hass, entry, credentials, oauth_info):
         patch("homeassistant.config_entries.ConfigEntries.async_reload", return_value=True),
     ):
         native.return_value.read = AsyncMock()
+        native.return_value.check_account = AsyncMock()
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"email": ENTRY_DATA["email"], "device_id": ENTRY_DATA["device_id"]}
         )
