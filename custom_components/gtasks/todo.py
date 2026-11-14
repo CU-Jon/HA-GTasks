@@ -108,15 +108,18 @@ class GoogleTaskTodoListEntity(CoordinatorEntity[TaskUpdateCoordinator], TodoLis
         self._attr_name = name
         self._attr_unique_id = f"{config_entry_id}-{task_list_id}"
         self._task_list_id = task_list_id
+        self._cached_records = None
+        self._cached_items: list[TodoItem] = []
 
     @property
     @override
     def todo_items(self) -> list[TodoItem] | None:
         """Get the current set of To-do items."""
-        return [
-            _convert_api_item(item)
-            for item in _order_tasks(self.coordinator.data["tasks"].get(self._task_list_id, []))
-        ]
+        records = self.coordinator.data["tasks"].get(self._task_list_id)
+        if records is not self._cached_records:
+            self._cached_items = [_convert_api_item(item) for item in _order_tasks(records or [])]
+            self._cached_records = records
+        return self._cached_items
 
     @property
     def available(self) -> bool:
@@ -128,7 +131,10 @@ class GoogleTaskTodoListEntity(CoordinatorEntity[TaskUpdateCoordinator], TodoLis
             "tasks_with_unverified_times": sum(
                 item.get("_native_schedule_available") is False
                 for item in self.coordinator.data["tasks"].get(self._task_list_id, [])
-            )
+            ),
+            "completed_tasks_hidden": self.coordinator.data.get("completed_tasks_hidden", {}).get(
+                self._task_list_id, 0
+            ),
         }
 
     @override

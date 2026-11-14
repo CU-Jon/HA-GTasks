@@ -111,6 +111,16 @@ Use either `due_date` or `due_datetime` in a call. Date-times are converted to H
 - Timed reads/writes, date changes, midnight and clearing just the time were previously verified against Google on disposable tasks. This Home Assistant adapter has automated tests with mocked Google responses. Installation and end-to-end behavior in a live Home Assistant instance still need validation. Clearing the entire due date uses the same field-mask protocol but has not yet been verified against Google.
 - If Google changes the private response envelope, entities become unavailable. A missing or undecodable individual schedule is reported as unverified; it never triggers a date-only write. Removing this integration does not delete Google tasks or revoke Google account credentials; manage grants in your Google account separately.
 
+### Completed task history
+
+All active tasks remain visible. By default, each list also shows its **100 most recently completed tasks**, selected by completion timestamp with no age cutoff. This keeps large completed histories from overwhelming Home Assistant's to-do page.
+
+To change the limit, open **Settings > Devices & services > Google Tasks with Times > Configure** (Options) and set **Maximum completed tasks per list**. Choose **0-500**; **0** hides completed tasks. Saving reloads the integration. Existing installations use 100 automatically after updating; no account setup is needed again.
+
+This limits the items exposed to Home Assistant, including to-do actions and the browser. It never deletes Google tasks. The entity's `completed_tasks_hidden` attribute reports how many completed items were omitted. Older completed tasks remain accessible in Google Tasks; if reopened there, they return to Home Assistant as active tasks, including their restored time when available.
+
+The integration still reads all API pages to preserve every active task and identify the newest completions correctly. The limit reduces the displayed history, not the Google API requests. Converted to-do items are cached until the next refresh.
+
 ## Development
 
 Use Linux and Python **3.14.2+** (the Home Assistant runtime requirement):

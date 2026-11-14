@@ -89,5 +89,19 @@
     "create_entry": {
       "default": "Google Tasks with Times is connected."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Completed task history",
+        "description": "Keep every active task and show only the newest completed tasks in each list. This limits what Home Assistant displays; it never deletes tasks from Google. Saving reloads this integration.",
+        "data": {
+          "completed_task_limit": "Maximum completed tasks per list"
+        },
+        "data_description": {
+          "completed_task_limit": "0 hides completed tasks. Default: 100. Maximum: 500. There is no age cutoff."
+        }
+      }
+    }
   }
 }

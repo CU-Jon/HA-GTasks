@@ -9,17 +9,26 @@ from urllib.parse import quote
 
 import aiohttp
 import probatio
-from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE, ConfigFlowResult
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_ACCESS_TOKEN, CONF_EMAIL, CONF_TOKEN
+from homeassistant.core import callback
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
 from .const import (
     CONF_ACCOUNT_ID,
+    CONF_COMPLETED_TASK_LIMIT,
     CONF_DEVICE_ID,
     CONF_MASTER_TOKEN,
+    DEFAULT_COMPLETED_TASK_LIMIT,
     DOMAIN,
+    MAX_COMPLETED_TASK_LIMIT,
     NETWORK_TIMEOUT,
     OAUTH2_SCOPES,
     TASKS_URL,
@@ -62,6 +71,12 @@ class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, doma
 
     DOMAIN = DOMAIN
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Configure how much completed history to expose to Home Assistant."""
+        return GoogleTasksOptionsFlow()
 
     @property
     def logger(self):
@@ -339,3 +354,24 @@ class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, doma
                 return self.async_abort(reason="wrong_account")
             self._oauth_data = dict(entry.data)
         return await self.async_step_native_setup()
+
+
+class GoogleTasksOptionsFlow(OptionsFlowWithReload):
+    """Bound completed history while retaining every active task."""
+
+    async def async_step_init(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_COMPLETED_TASK_LIMIT,
+                        default=self.config_entry.options.get(
+                            CONF_COMPLETED_TASK_LIMIT, DEFAULT_COMPLETED_TASK_LIMIT
+                        ),
+                    ): probatio.All(int, probatio.Range(min=0, max=MAX_COMPLETED_TASK_LIMIT)),
+                }
+            ),
+        )
