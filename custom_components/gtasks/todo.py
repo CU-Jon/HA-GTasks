@@ -121,6 +121,15 @@ class GoogleTaskTodoListEntity(CoordinatorEntity[TaskUpdateCoordinator], TodoLis
     def available(self) -> bool:
         return super().available and self._task_list_id in self.coordinator.data["tasks"]
 
+    @property
+    def extra_state_attributes(self):
+        return {
+            "tasks_with_unverified_times": sum(
+                item.get("_native_schedule_available") is False
+                for item in self.coordinator.data["tasks"].get(self._task_list_id, [])
+            )
+        }
+
     @override
     async def async_create_todo_item(self, item: TodoItem) -> None:
         """Add an item to the To-do list."""

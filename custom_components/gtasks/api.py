@@ -5,6 +5,8 @@ uses HA's shared async session rather than blocking discovery clients.
 """
 
 import asyncio
+import logging
+from collections import Counter
 from datetime import date, datetime
 from urllib.parse import quote
 
@@ -13,9 +15,11 @@ from homeassistant.const import CONF_ACCESS_TOKEN
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import NETWORK_TIMEOUT, TASKS_URL
-from .exceptions import OutcomeUnknown, PartialChange, TasksError
+from .exceptions import NativeTaskUnavailable, OutcomeUnknown, PartialChange, TasksError
 from .native import due_for_record, schedule_for_due
 from .protocol import ProtocolError
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TasksApi:
@@ -77,24 +81,69 @@ class TasksApi:
         async with self.lock:
             lists = await self._pages("/users/@me/lists")
             tasks = {}
+            public_membership = {}
+            skipped_subtasks = 0
             for item in lists:
                 tasks[item["id"]] = await self._pages(
                     f"/lists/{quote(item['id'], safe='')}/tasks",
                     {"showCompleted": "true", "showHidden": "true", "showDeleted": "false"},
                 )
+                public_membership[item["id"]] = [task["id"] for task in tasks[item["id"]]]
+                skipped_subtasks += sum(
+                    task.get("parent") is not None for task in tasks[item["id"]]
+                )
+                tasks[item["id"]] = [
+                    task for task in tasks[item["id"]] if task.get("parent") is None
+                ]
             snapshot = await self.native.read()
             await self.native.check_account(
                 snapshot,
                 (item["id"] for item in lists),
-                {list_id: [item["id"] for item in records] for list_id, records in tasks.items()},
+                public_membership,
             )
+            missing = Counter()
+            statuses = Counter()
             for list_id, records in tasks.items():
                 for item in records:
-                    native = self.native.find(snapshot, item["id"], list_id)
                     try:
+                        native = self.native.find(snapshot, item["id"], list_id)
                         item["_native_due"] = due_for_record(native)
-                    except ProtocolError:
-                        raise TasksError("A task's native schedule could not be decoded.") from None
+                        item["_native_schedule_available"] = True
+                    except (NativeTaskUnavailable, ProtocolError) as err:
+                        reason = (
+                            err.reason
+                            if isinstance(err, NativeTaskUnavailable)
+                            else "invalid_schedule"
+                        )
+                        missing[reason] += 1
+                        statuses[
+                            "completed" if item.get("status") == "completed" else "active"
+                        ] += 1
+                        try:
+                            item["_native_due"] = (
+                                datetime.fromisoformat(item["due"]).date()
+                                if item.get("due")
+                                else None
+                            )
+                        except ValueError, TypeError:
+                            raise TasksError("Google returned an invalid task due date.") from None
+                        item["_native_schedule_available"] = False
+            if missing:
+                _LOGGER.warning(
+                    "Native schedule coverage incomplete: public_tasks=%d native_tasks=%d "
+                    "missing_task=%d list_mismatch=%d ambiguous_task=%d invalid_schedule=%d "
+                    "unverified_active=%d unverified_completed=%d skipped_subtasks=%d. "
+                    "Unverified tasks show public dates only; their updates are blocked.",
+                    sum(len(items) for items in tasks.values()),
+                    len(snapshot.tasks),
+                    missing["missing_task"],
+                    missing["list_mismatch"],
+                    missing["ambiguous_task"],
+                    missing["invalid_schedule"],
+                    statuses["active"],
+                    statuses["completed"],
+                    skipped_subtasks,
+                )
             return lists, tasks
 
     def _desired(self, due):

@@ -149,9 +149,97 @@ async def test_timeout_is_unknown_and_not_retried(api, aioclient_mock):
     assert aioclient_mock.call_count == 1
 
 
-async def test_missing_private_record_fails_refresh(api, aioclient_mock):
+async def test_missing_private_record_keeps_public_date_and_warns(api, aioclient_mock, caplog):
     api.native.read.return_value = Snapshot({}, None)
     aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={"items": [{"id": LIST_ID}]})
-    aioclient_mock.get(TASKS_URL + f"/lists/{LIST_ID}/tasks", json={"items": [{"id": TASK_ID}]})
-    with pytest.raises(TasksError, match="not yet visible"):
-        await api.refresh()
+    aioclient_mock.get(
+        TASKS_URL + f"/lists/{LIST_ID}/tasks",
+        json={"items": [{"id": TASK_ID, "due": "2026-11-16T00:00:00Z", "title": "private-title"}]},
+    )
+    lists, tasks = await api.refresh()
+    assert tasks[LIST_ID][0]["_native_due"] == date(2026, 11, 16)
+    assert tasks[LIST_ID][0]["_native_schedule_available"] is False
+    assert "missing_task=1" in caplog.text
+    assert "unverified_active=1" in caplog.text
+    assert TASK_ID not in caplog.text
+    assert "private-title" not in caplog.text
+
+
+async def test_subtasks_do_not_need_private_matching(api, aioclient_mock):
+    aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={"items": [{"id": LIST_ID}]})
+    aioclient_mock.get(
+        TASKS_URL + f"/lists/{LIST_ID}/tasks",
+        json={
+            "items": [
+                {"id": TASK_ID},
+                {"id": "unavailable-subtask", "parent": TASK_ID},
+            ]
+        },
+    )
+    lists, tasks = await api.refresh()
+    assert [item["id"] for item in tasks[LIST_ID]] == [TASK_ID]
+    assert tasks[LIST_ID][0]["_native_schedule_available"] is True
+
+
+async def test_unmatched_task_updates_are_blocked_before_write(api):
+    api.native.read.return_value = Snapshot({}, None)
+    api._request = AsyncMock()
+    with pytest.raises(TasksError, match="time cannot be edited"):
+        await api.patch(LIST_ID, TASK_ID, {"title": "Change"}, DUE)
+    api._request.assert_not_awaited()
+    api.native.set_schedule.assert_not_awaited()
+
+
+async def test_only_matching_subtask_can_establish_list_identity(api, aioclient_mock):
+    from dataclasses import replace
+
+    from custom_components.gtasks.native import public_id
+
+    child = public_id("child-task")
+    record = replace(snapshot().tasks["test-task"], task_id="child-task", list_id="legacy-list")
+    api.native.read.return_value = Snapshot(
+        {"child-task": record}, None, frozenset({"legacy-list"})
+    )
+    api.native.check_account = NativeClient.check_account.__get__(api.native, NativeClient)
+    aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={"items": [{"id": LIST_ID}]})
+    aioclient_mock.get(
+        TASKS_URL + f"/lists/{LIST_ID}/tasks",
+        json={
+            "items": [
+                {"id": TASK_ID},
+                {"id": child, "parent": TASK_ID},
+            ]
+        },
+    )
+    lists, tasks = await api.refresh()
+    assert api.native._list_aliases[LIST_ID] == "legacy-list"
+    assert [item["id"] for item in tasks[LIST_ID]] == [TASK_ID]
+    assert tasks[LIST_ID][0]["_native_schedule_available"] is False
+
+
+async def test_completed_task_list_mismatch_does_not_block_matched_time(
+    api, aioclient_mock, caplog
+):
+    from dataclasses import replace
+
+    from custom_components.gtasks.native import public_id
+
+    old_id = public_id("old-task")
+    current = snapshot()
+    old_record = replace(current.tasks["test-task"], task_id="old-task", list_id="unknown-list")
+    api.native.read.return_value = Snapshot({**current.tasks, "old-task": old_record}, None)
+    aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={"items": [{"id": LIST_ID}]})
+    aioclient_mock.get(
+        TASKS_URL + f"/lists/{LIST_ID}/tasks",
+        json={
+            "items": [
+                {"id": TASK_ID},
+                {"id": old_id, "status": "completed"},
+            ]
+        },
+    )
+    lists, tasks = await api.refresh()
+    assert tasks[LIST_ID][0]["_native_due"] == DUE
+    assert tasks[LIST_ID][1]["_native_schedule_available"] is False
+    assert "list_mismatch=1" in caplog.text
+    assert "unverified_completed=1" in caplog.text

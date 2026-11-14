@@ -105,9 +105,9 @@ Use either `due_date` or `due_datetime` in a call. Date-times are converted to H
 - Schedule writes use a freshly read task version and are checked by an independent read. Writes are never replayed automatically. A timeout can mean the change happened; refresh before retrying.
 - Creating a timed task and updating task contents plus its schedule require separate Google requests. An error may report that the content change succeeded while the schedule remains unconfirmed.
 - Recurring tasks can be read and completed. Changing their schedule is refused to avoid modifying recurrence rules or a whole series accidentally.
-- Subtasks are hidden, following the upstream integration. Shared/assigned tasks unavailable to the private endpoint cause a refresh error rather than silently losing their time.
+- Subtasks are hidden, following the upstream integration, and are excluded before native schedule lookup. A public task missing from the private response stays visible with its public due date; its time is unverified. The list's `tasks_with_unverified_times` attribute and a warning in Home Assistant's logs report this count. Updates to such tasks are blocked until their native records can be verified. Other matched tasks retain full time support. The warning contains counts only, never task IDs, titles or credentials.
 - Timed reads/writes, date changes, midnight and clearing just the time were previously verified against Google on disposable tasks. This Home Assistant adapter has automated tests with mocked Google responses. Installation and end-to-end behavior in a live Home Assistant instance still need validation. Clearing the entire due date uses the same field-mask protocol but has not yet been verified against Google.
-- If Google changes the private protocol, entities become unavailable instead of falling back to date-only writes. Removing this integration does not delete Google tasks or revoke Google account credentials; manage grants in your Google account separately.
+- If Google changes the private response envelope, entities become unavailable. A missing or undecodable individual schedule is reported as unverified; it never triggers a date-only write. Removing this integration does not delete Google tasks or revoke Google account credentials; manage grants in your Google account separately.
 
 ## Development
 

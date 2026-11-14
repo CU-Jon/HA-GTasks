@@ -15,6 +15,7 @@ from .const import NETWORK_TIMEOUT, SYNC_URL, TASKS_APP, TASKS_CERT, TASKS_SCOPE
 from .exceptions import (
     AccountVerificationError,
     NativeAuthError,
+    NativeTaskUnavailable,
     OutcomeUnknown,
     TasksError,
 )
@@ -279,8 +280,12 @@ class NativeClient:
             except TasksError:
                 pass
         records = [snapshot.tasks[key] for key in task_ids if key in snapshot.tasks]
-        if len(records) != 1 or records[0].list_id not in list_ids:
-            raise TasksError("Task is not yet visible in native Tasks; refresh the list.")
+        if not records:
+            raise NativeTaskUnavailable("missing_task")
+        if len(records) != 1:
+            raise NativeTaskUnavailable("ambiguous_task")
+        if records[0].list_id not in list_ids:
+            raise NativeTaskUnavailable("list_mismatch")
         return records[0]
 
     async def set_schedule(self, list_id, task_id, desired):
