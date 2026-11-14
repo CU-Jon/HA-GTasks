@@ -27,6 +27,13 @@ class TasksApi:
         self.session, self.oauth, self.native, self.timezone = session, oauth, native, timezone
         self.lock = asyncio.Lock()
 
+    @staticmethod
+    def _public_due(item):
+        try:
+            return datetime.fromisoformat(item["due"]).date() if item.get("due") else None
+        except ValueError, TypeError:
+            raise TasksError("Google returned an invalid task due date.") from None
+
     async def _request(self, method, path, *, body=None, params=None):
         write = method != "GET"
         await self.oauth.async_ensure_token_valid()
@@ -95,16 +102,25 @@ class TasksApi:
                 tasks[item["id"]] = [
                     task for task in tasks[item["id"]] if task.get("parent") is None
                 ]
-            snapshot = await self.native.read()
-            await self.native.check_account(
-                snapshot,
-                (item["id"] for item in lists),
-                public_membership,
-            )
+            snapshot = None
+            if any(
+                task.get("status") != "completed" for records in tasks.values() for task in records
+            ):
+                snapshot = await self.native.read()
+                await self.native.check_account(
+                    snapshot,
+                    (item["id"] for item in lists),
+                    public_membership,
+                )
             missing = Counter()
             statuses = Counter()
             for list_id, records in tasks.items():
                 for item in records:
+                    if item.get("status") == "completed":
+                        item["_native_due"] = self._public_due(item)
+                        # Intentionally not queried, rather than an unverified active time.
+                        item["_native_schedule_available"] = None
+                        continue
                     try:
                         native = self.native.find(snapshot, item["id"], list_id)
                         item["_native_due"] = due_for_record(native)
@@ -119,21 +135,14 @@ class TasksApi:
                         statuses[
                             "completed" if item.get("status") == "completed" else "active"
                         ] += 1
-                        try:
-                            item["_native_due"] = (
-                                datetime.fromisoformat(item["due"]).date()
-                                if item.get("due")
-                                else None
-                            )
-                        except ValueError, TypeError:
-                            raise TasksError("Google returned an invalid task due date.") from None
+                        item["_native_due"] = self._public_due(item)
                         item["_native_schedule_available"] = False
             if missing:
                 _LOGGER.warning(
                     "Native schedule coverage incomplete: public_tasks=%d native_tasks=%d "
                     "missing_task=%d list_mismatch=%d ambiguous_task=%d invalid_schedule=%d "
                     "unverified_active=%d unverified_completed=%d skipped_subtasks=%d. "
-                    "Unverified tasks show public dates only; their updates are blocked.",
+                    "Unverified active tasks show public dates only; schedule edits are blocked.",
                     sum(len(items) for items in tasks.values()),
                     len(snapshot.tasks),
                     missing["missing_task"],
@@ -172,10 +181,22 @@ class TasksApi:
                         "Refresh before creating another."
                     ) from None
 
-    async def patch(self, task_list_id, task_id, task, due):
-        desired = self._desired(due)
+    async def patch(self, task_list_id, task_id, task, due, *, schedule_changed):
         async with self.lock:
+            body = {k: v for k, v in task.items() if k != "due"}
+            path = f"/lists/{quote(task_list_id, safe='')}/tasks/{quote(task_id, safe='')}"
+            if body.get("status") == "needsAction":
+                body["completed"] = None
+            if not schedule_changed:
+                # HA supplied the previous displayed due value. Content/status-only
+                # updates never rewrite due, including when a completed task vanishes
+                # from Sync or its hidden time cannot be read.
+                await self._request("PATCH", path, body=body)
+                return
+            desired = self._desired(due)
             current = self.native.find(await self.native.read(), task_id, task_list_id)
+            if current.completed:
+                raise TasksError("Reopen the task before changing its schedule.")
             # Completion/content edits must not rewrite another client's timezone.
             try:
                 unchanged = due_for_record(current) == due
@@ -183,7 +204,18 @@ class TasksApi:
                 raise TasksError("The task's current schedule could not be decoded.") from None
             if not unchanged and current.recurring:
                 raise TasksError("Changing a recurring task's schedule is not supported.")
-            body = {k: v for k, v in task.items() if k != "due"}
+            if not unchanged and body.get("status") == "completed":
+                # Completion can remove the record from Sync. Set and verify its
+                # schedule while it is still active, then complete through REST.
+                await self.native.set_schedule(task_list_id, task_id, desired)
+                try:
+                    await self._request("PATCH", path, body=body)
+                except Exception:
+                    raise PartialChange(
+                        "The schedule was updated, but completion was not confirmed. "
+                        "Refresh before retrying."
+                    ) from None
+                return
             await self._request(
                 "PATCH",
                 f"/lists/{quote(task_list_id, safe='')}/tasks/{quote(task_id, safe='')}",

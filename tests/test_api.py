@@ -76,16 +76,19 @@ async def test_repeated_token_stops(api):
 @pytest.mark.parametrize("due", [DUE, DUE.astimezone(UTC)])
 async def test_complete_does_not_touch_schedule(api, due):
     api._request = AsyncMock(return_value={})
-    await api.patch(LIST_ID, TASK_ID, {"status": "completed"}, due)
+    await api.patch(LIST_ID, TASK_ID, {"status": "completed"}, due, schedule_changed=False)
     api.native.set_schedule.assert_not_awaited()
     assert api._request.call_args.kwargs["body"] == {"status": "completed"}
+    api.native.read.assert_not_awaited()
 
 
 async def test_date_only_does_not_rewrite_timezone(api):
     api.native.read.return_value = snapshot(date(2026, 11, 15))
     api.timezone = "Europe/London"
     api._request = AsyncMock(return_value={})
-    await api.patch(LIST_ID, TASK_ID, {"title": "Renamed"}, date(2026, 11, 15))
+    await api.patch(
+        LIST_ID, TASK_ID, {"title": "Renamed"}, date(2026, 11, 15), schedule_changed=False
+    )
     api.native.set_schedule.assert_not_awaited()
 
 
@@ -94,7 +97,9 @@ async def test_date_only_does_not_rewrite_timezone(api):
 )
 async def test_schedule_changes(api, due):
     api._request = AsyncMock(return_value={})
-    await api.patch(LIST_ID, TASK_ID, {"title": "Renamed", "due": "discard"}, due)
+    await api.patch(
+        LIST_ID, TASK_ID, {"title": "Renamed", "due": "discard"}, due, schedule_changed=True
+    )
     api.native.set_schedule.assert_awaited_once_with(
         LIST_ID, TASK_ID, schedule_for_due(due, api.timezone)
     )
@@ -105,14 +110,14 @@ async def test_recurring_refused_before_content_write(api):
     api.native.read.return_value = snapshot(recurring=True)
     api._request = AsyncMock()
     with pytest.raises(TasksError, match="recurring"):
-        await api.patch(LIST_ID, TASK_ID, {"title": "Do not change"}, None)
+        await api.patch(LIST_ID, TASK_ID, {"title": "Do not change"}, None, schedule_changed=True)
     api._request.assert_not_awaited()
 
 
 async def test_recurring_completion_supported(api):
     api.native.read.return_value = snapshot(recurring=True)
     api._request = AsyncMock(return_value={})
-    await api.patch(LIST_ID, TASK_ID, {"status": "completed"}, DUE)
+    await api.patch(LIST_ID, TASK_ID, {"status": "completed"}, DUE, schedule_changed=False)
     api.native.set_schedule.assert_not_awaited()
 
 
@@ -129,7 +134,7 @@ async def test_patch_partial_failure(api):
     api._request = AsyncMock(return_value={})
     api.native.set_schedule.side_effect = OutcomeUnknown()
     with pytest.raises(PartialChange, match="details were updated"):
-        await api.patch(LIST_ID, TASK_ID, {"title": "New"}, None)
+        await api.patch(LIST_ID, TASK_ID, {"title": "New"}, None, schedule_changed=True)
     api._request.assert_awaited_once()
 
 
@@ -185,7 +190,7 @@ async def test_unmatched_task_updates_are_blocked_before_write(api):
     api.native.read.return_value = Snapshot({}, None)
     api._request = AsyncMock()
     with pytest.raises(TasksError, match="time cannot be edited"):
-        await api.patch(LIST_ID, TASK_ID, {"title": "Change"}, DUE)
+        await api.patch(LIST_ID, TASK_ID, {"title": "Change"}, DUE, schedule_changed=True)
     api._request.assert_not_awaited()
     api.native.set_schedule.assert_not_awaited()
 
@@ -240,6 +245,56 @@ async def test_completed_task_list_mismatch_does_not_block_matched_time(
     )
     lists, tasks = await api.refresh()
     assert tasks[LIST_ID][0]["_native_due"] == DUE
-    assert tasks[LIST_ID][1]["_native_schedule_available"] is False
-    assert "list_mismatch=1" in caplog.text
-    assert "unverified_completed=1" in caplog.text
+    assert tasks[LIST_ID][1]["_native_schedule_available"] is None
+    assert "Native schedule coverage incomplete" not in caplog.text
+
+
+async def test_completed_only_list_never_reads_native(api, aioclient_mock, caplog):
+    api.native.read.side_effect = AssertionError("Completed history must not query Sync")
+    aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={"items": [{"id": LIST_ID}]})
+    aioclient_mock.get(
+        TASKS_URL + f"/lists/{LIST_ID}/tasks",
+        json={
+            "items": [
+                {"id": TASK_ID, "status": "completed", "due": "2026-11-15T00:00:00Z"},
+            ]
+        },
+    )
+    lists, tasks = await api.refresh()
+    assert tasks[LIST_ID][0]["_native_due"] == date(2026, 11, 15)
+    assert tasks[LIST_ID][0]["_native_schedule_available"] is None
+    api.native.read.assert_not_awaited()
+    api.native.check_account.assert_not_awaited()
+    assert "Native schedule coverage incomplete" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"title": "Rename"},
+        {"notes": "New description"},
+        {"status": "needsAction"},
+        {"status": "completed"},
+    ],
+)
+async def test_ordinary_updates_work_when_native_unavailable(api, task):
+    api.native.read.side_effect = AssertionError("Ordinary update must not query Sync")
+    api._request = AsyncMock(return_value={})
+    await api.patch(LIST_ID, TASK_ID, task, date(2026, 11, 15), schedule_changed=False)
+    api._request.assert_awaited_once()
+    body = api._request.call_args.kwargs["body"]
+    assert "due" not in body
+    if task.get("status") == "needsAction":
+        assert body["completed"] is None
+    api.native.read.assert_not_awaited()
+    api.native.set_schedule.assert_not_awaited()
+
+
+async def test_time_is_verified_before_completion(api):
+    events = []
+    api.native.set_schedule.side_effect = lambda *args: events.append("set_time")
+    api._request = AsyncMock(side_effect=lambda *args, **kwargs: events.append("complete"))
+    await api.patch(
+        LIST_ID, TASK_ID, {"status": "completed"}, DUE.replace(minute=45), schedule_changed=True
+    )
+    assert events == ["set_time", "complete"]

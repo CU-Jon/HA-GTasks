@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinator import GoogleTasksConfigEntry, TaskUpdateCoordinator
+from .exceptions import TasksError
 
 PARALLEL_UPDATES = 0
 
@@ -146,12 +147,26 @@ class GoogleTaskTodoListEntity(CoordinatorEntity[TaskUpdateCoordinator], TodoLis
     async def async_update_todo_item(self, item: TodoItem) -> None:
         """Update a To-do item."""
         uid: str = cast(str, item.uid)
+        previous = next(
+            (
+                record
+                for record in self.coordinator.data["tasks"].get(self._task_list_id, [])
+                if record["id"] == uid
+            ),
+            None,
+        )
+        if previous is None:
+            raise TasksError("Refresh the list before updating this task.")
+        schedule_changed = item.due != previous["_native_due"]
+        if previous.get("status") == "completed" and schedule_changed:
+            raise TasksError("Reopen the task before changing its schedule.")
         try:
             await self.coordinator.api.patch(
                 self._task_list_id,
                 uid,
                 task=_convert_todo_item(item),
                 due=item.due,
+                schedule_changed=schedule_changed,
             )
         finally:
             await self.coordinator.async_refresh()
