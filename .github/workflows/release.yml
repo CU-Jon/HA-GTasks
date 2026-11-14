@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    branches: [main, develop]
+  # Only merged base-branch code is checked out, never an unmerged PR head.
+  # Unlike pull_request, this also permits publishing merges from forks.
+  pull_request_target:
+    branches: [main, develop]
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.base.ref || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
+
+jobs:
+  build:
+    if: >-
+      (github.event_name != 'pull_request_target' || github.event.pull_request.merged == true) &&
+      (github.event.pull_request.base.ref == 'main' ||
+       github.event.pull_request.base.ref == 'develop' ||
+       github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.prepare.outputs.publish }}
+      sha: ${{ steps.prepare.outputs.sha }}
+      tag: ${{ steps.prepare.outputs.tag }}
+      version: ${{ steps.prepare.outputs.version }}
+      prerelease: ${{ steps.prepare.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Plan release and prepare version
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py prepare
+      - if: steps.prepare.outputs.publish == 'true'
+        run: python -m pip install -r requirements_test.txt
+      - if: steps.prepare.outputs.publish == 'true'
+        run: ruff check .
+      - if: steps.prepare.outputs.publish == 'true'
+        run: ruff format --check .
+      - if: steps.prepare.outputs.publish == 'true'
+        run: pytest
+      - if: steps.prepare.outputs.publish == 'true'
+        uses: home-assistant/actions/hassfest@master
+      - if: steps.prepare.outputs.publish == 'true'
+        uses: hacs/action@main
+        with:
+          category: integration
+          comment: false
+      - if: steps.prepare.outputs.publish == 'true'
+        run: python scripts/package.py
+      - if: steps.prepare.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package
+          path: dist/gtasks.zip*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_SHA: ${{ needs.build.outputs.sha }}
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.build.outputs.version }}
+      RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package
+          path: dist
+      - name: Publish verified source and package
+        run: python scripts/release.py publish

@@ -1,19 +1,15 @@
 # Google Tasks with Times
 
-A Home Assistant custom integration based on the built-in Google Tasks integration, with support for **due dates and due times** in Home Assistant's standard To-do lists.
+Use Google Tasks in Home Assistant's **To-do lists**, with support for due dates and times.
 
-Requires **Home Assistant 2026.11.0 or newer**. The integration domain is `gtasks`, so it can coexist with the built-in `google_tasks` integration. It creates separate entities; existing entity IDs and automations are not migrated automatically.
+- One to-do entity per task list, with new lists discovered automatically.
+- Create, rename, describe, complete, reopen, delete and reorder tasks.
+- Set due times or switch a timed task back to a date-only task.
+- Keep the original schedule when editing task details or completing a task.
+- Connect multiple Google accounts.
+- Show all active tasks and a configurable amount of completed history.
 
-## Features
-
-- One To-do entity per Google task list, with additional lists discovered on refresh.
-- Create, rename, describe, complete, delete and reorder tasks.
-- Read and write local due times, including midnight and nonzero minutes.
-- Change a timed task back to a date-only task.
-- Preserve a task's time when completing it or editing its description.
-- Support multiple Google accounts, with matching public and native credentials checked during setup.
-
-Google's public Tasks API discards times. This integration uses normal Google OAuth for task contents and an Android master token to request a separate Tasks-scoped token for the private scheduling API. The private API is undocumented and may change without notice. This project is not affiliated with Google or Home Assistant.
+Requires **Home Assistant 2026.11.0 or newer** and a Google account. This is a custom integration and is not affiliated with Google or Home Assistant.
 
 ## Installation
 
@@ -23,13 +19,15 @@ Google's public Tasks API discards times. This integration uses normal Google OA
 
 [![Open Google Tasks with Times in your Home Assistant Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=CU-Jon&repository=HA-GTasks&category=integration)
 
-Select the button to open this repository in your Home Assistant Marketplace. If prompted, approve adding it as a custom repository. Install **Google Tasks with Times**, follow any restart prompt, then continue with [Setup](#setup).
+Open the link, add the custom repository if prompted, and install **Google Tasks with Times**. Follow any restart prompt, then continue with [Setup](#setup).
 
-For HACS, you can also add `https://github.com/CU-Jon/HA-GTasks` under **Custom repositories**, choose **Integration**, and download **Google Tasks with Times**.
+In HACS, you can also add `https://github.com/CU-Jon/HA-GTasks` under **Custom repositories** with the category **Integration**.
 
 ### Manual installation
 
-Copy `custom_components/gtasks` into the `custom_components` directory of your Home Assistant configuration and restart Home Assistant. Alternatively, extract the `gtasks.zip` produced by `python scripts/package.py` into your configuration directory; it contains `custom_components/gtasks/`.
+Download `gtasks.zip` from the [latest stable release](https://github.com/CU-Jon/HA-GTasks/releases/latest) and extract it into your Home Assistant configuration directory. The resulting path should be `custom_components/gtasks/manifest.json`. Restart Home Assistant.
+
+Alternatively, copy the repository's `custom_components/gtasks` directory into your configuration's `custom_components` directory.
 
 <!-- ha-marketplace:exclude-end -->
 
@@ -37,45 +35,37 @@ Copy `custom_components/gtasks` into the `custom_components` directory of your H
 
 ### Google OAuth
 
-1. Follow the official [Google Tasks OAuth setup instructions](https://www.home-assistant.io/integrations/google_tasks/#prerequisites): create a Google Cloud project, enable **Google Tasks API**, configure its consent screen, and create an OAuth client of type **Web application**.
-2. Add `https://my.home-assistant.io/redirect/oauth` as an authorized redirect URI. Your [My Home Assistant](https://my.home-assistant.io/) instance URL must point to the installation you are configuring.
-3. In **Settings → Devices & services → Add integration**, select **Google Tasks with Times**. Enter the OAuth client ID and secret when prompted, then authorize your Google account.
-4. Choose **Obtain a token with guided Google sign-in**. The next screens explain how to sign in to Google and copy its temporary sign-in cookie. Home Assistant generates the device ID, obtains the master token, and verifies the account automatically after you submit the cookie. You can also choose **Use an existing master token**.
+1. Follow the [Google Tasks prerequisites](https://www.home-assistant.io/integrations/google_tasks/#prerequisites) to create a Google Cloud project, enable **Google Tasks API**, configure the consent screen, and create an OAuth client of type **Web application**.
+2. Add `https://my.home-assistant.io/redirect/oauth` as an authorized redirect URI. Make sure [My Home Assistant](https://my.home-assistant.io/) points to your Home Assistant instance.
+3. Open **Settings → Devices & services → Add integration** and select **Google Tasks with Times**.
+4. Enter your OAuth client ID and secret when prompted, then authorize your Google account.
+5. Continue with the task-time authentication below, using the same Google account.
 
-If using an external consent screen in Testing mode, add your account as a test user. Google may expire testing refresh tokens; see the upstream instructions for moving the consent screen to production for personal use. Application credentials belong to this custom integration; an existing built-in Google Tasks entry is not imported.
+If your consent screen is in **Testing** mode, add your Google account as a test user. Testing refresh tokens may expire; follow the linked Google Tasks instructions for configuring the consent screen.
+
+This integration can coexist with the built-in Google Tasks integration. It creates separate entities and requires its own setup; existing entities and automations are not migrated automatically.
 
 ### Native credentials
 
-The recommended setup wizard needs Chrome or Edge on a computer. It walks you through Google's sign-in (including two-step verification), then shows where to find the temporary `oauth_token` cookie in Developer Tools. Paste only that cookie's value into the protected field in Home Assistant. Use your trusted HTTPS Home Assistant address when submitting credentials. Home Assistant automatically exchanges it for an **Android master token** and generates the matching **16-character hexadecimal device ID**. The temporary cookie is not stored in the configuration entry or shown again after submission.
+Choose **Obtain a token with guided Google sign-in** during setup. Use Chrome or Edge on a computer and follow the wizard to:
 
-Google sign-in and copying the cookie remain manual: the Home Assistant page cannot read cookies from Google's website. The exchange and account checks happen inside Home Assistant, without a terminal, separate script, or Google password being supplied to this integration. If verification is temporarily unavailable after a successful exchange, select **Submit** to retry with the master token already obtained. It stays in memory until setup succeeds or is cancelled; you do not need to copy another cookie. A rejected token or confirmed different account requires a fresh sign-in cookie.
+1. Sign in to Google in a separate tab, including any two-step verification.
+2. Copy the temporary **`oauth_token` cookie value** from the browser's Developer Tools, as shown in the wizard.
+3. Submit that value and your Google email to Home Assistant.
 
-Account verification compares identifiers, not list names. When public and private list IDs differ, the integration uses the normal OAuth credential to read task IDs and matches those exact tasks to the private response. That establishes the list mapping for subsequent time edits. The Android token is used only with the private endpoint. If the account has no tasks available to both APIs, verification remains unavailable; create a regular task in Google Tasks and retry setup.
+Home Assistant obtains an Android master token, generates a matching device ID, and verifies access to your task lists. Your Google password stays on Google's website. The temporary cookie is not stored after setup.
 
-You may reuse an existing Android master token and its matching device ID that you control. The integration exchanges it for a Tasks-scoped access token using the Google Tasks Android app identity. It does not access Keep or need a running phone, ADB, a HAR capture, or browser cookies after setup.
+If verification temporarily fails after the token exchange, select **Submit** to retry with the token already obtained. If no shared task is available for verification, create an ordinary incomplete task in Google Tasks and retry.
 
-As an alternative to the wizard, you can obtain a token with the optional local helper. Use Python 3.14 or newer in a private terminal:
+You can instead choose **Use an existing master token** and supply its email, master token and matching 16-character hexadecimal device ID.
 
-```console
-python -m venv .venv
-```
-
-Activate that environment (`.venv\Scripts\activate` on Windows, or `source .venv/bin/activate` on Linux/macOS), then run:
-
-```console
-python -m pip install gpsoauth==3.0.0
-python tools/get_master_token.py --output .local/google-tasks-credentials.json
-```
-
-The helper explains how to obtain Google's temporary `oauth_token` cookie in your own browser. It accepts that cookie through hidden terminal input and writes the resulting master token to the specified local file. Open that file privately and enter its three values into Home Assistant. No credentials are printed. Delete the local copy after setup if you do not need it for recovery. The helper refuses to overwrite an existing file.
-
-**Treat the master token as a password.** It is a powerful Google account credential. Home Assistant stores it with the configuration entry in `.storage`, alongside the OAuth credentials. It is not encrypted separately by this integration; protect your Home Assistant storage and backups. The integration's diagnostics include counts only, and never export credentials, account identifiers, titles or notes. Do not attach credential files, HARs or debug HTTP captures to public issues.
-
-To replace native credentials later, use the integration's **Reconfigure** menu. Both guided sign-in and existing-token entry are available there and during reauthentication. Leaving the master-token field blank when updating existing credentials retains the stored value. Reauthentication requires the same Google account.
+To replace these credentials later, use the integration's **Reconfigure** menu. Reauthentication must use the same Google account.
 
 ## Using task times
 
-Use the standard Home Assistant To-do editor or `todo.add_item` / `todo.update_item` actions. For example:
+Open Home Assistant's **To-do lists**, select a list, and use the task editor to set a due date and time. Automations can use the standard `todo.add_item` and `todo.update_item` actions.
+
+Create a timed task:
 
 ```yaml
 action: todo.add_item
@@ -86,7 +76,7 @@ data:
   due_datetime: "2026-11-16T12:35:00-05:00"
 ```
 
-To remove the time while keeping the day:
+Remove its time while keeping the date:
 
 ```yaml
 action: todo.update_item
@@ -97,50 +87,38 @@ data:
   due_date: "2026-11-16"
 ```
 
-Use either `due_date` or `due_datetime` in a call. Date-times are converted to Home Assistant's configured timezone for writing. Explicit UTC offsets identify the intended instant at daylight-saving transitions. Google Tasks supports minute precision; seconds must be zero. Midnight is a timed task, distinct from a task with only a date.
-
-## Behavior and limitations
-
-- Refreshes every 30 minutes and after mutations. Use `homeassistant.update_entity` to request a refresh. One private account snapshot is shared by all lists.
-- Schedule writes use a freshly read task version and are checked by an independent read. Writes are never replayed automatically. A timeout can mean the change happened; refresh before retrying.
-- Creating a timed task and updating task contents plus its schedule require separate Google requests. An error may report that the content change succeeded while the schedule remains unconfirmed.
-- Recurring tasks can be read and completed. Changing their schedule is refused to avoid modifying recurrence rules or a whole series accidentally.
-- Completed tasks use the public API and show their due date without a time. Their private schedules are not queried or decoded, and completed history does not generate missing-time warnings. Reopen a completed task before changing its schedule.
-- Titles, descriptions, completion, reopening and deletion use the public API. Completing a task does not require private schedule access or rewrite its due date/time. Reopening clears the completion timestamp; subsequent refreshes read its native schedule again once it is visible.
-- Subtasks are hidden, following the upstream integration, and are excluded before native schedule lookup. An active task missing from the private response stays visible with its public due date; its time is unverified. The list's `tasks_with_unverified_times` attribute and a warning in Home Assistant's logs report this active-task count. Schedule changes to these tasks are blocked until verified; ordinary content/status changes remain available. Other active tasks retain full time support. Warnings contain counts only, never task IDs, titles or credentials.
-- Timed reads/writes, date changes, midnight and clearing just the time were previously verified against Google on disposable tasks. This Home Assistant adapter has automated tests with mocked Google responses. Installation and end-to-end behavior in a live Home Assistant instance still need validation. Clearing the entire due date uses the same field-mask protocol but has not yet been verified against Google.
-- If Google changes the private response envelope, entities become unavailable. A missing or undecodable individual schedule is reported as unverified; it never triggers a date-only write. Removing this integration does not delete Google tasks or revoke Google account credentials; manage grants in your Google account separately.
+Replace `todo.my_tasks` with your entity ID. Supply either `due_date` or `due_datetime` in a call. Times are converted to Home Assistant's configured timezone; include a UTC offset to identify the intended instant during daylight-saving transitions. Times have minute precision, so seconds must be zero. Midnight is supported.
 
 ### Completed task history
 
-All active tasks remain visible. By default, each list also shows its **100 most recently completed tasks**, selected by completion timestamp with no age cutoff. This keeps large completed histories from overwhelming Home Assistant's to-do page.
+Each list displays all active top-level tasks and, by default, its **100 most recently completed tasks**, with no age cutoff.
 
-To change the limit, open **Settings > Devices & services > Google Tasks with Times > Configure** (Options) and set **Maximum completed tasks per list**. Choose **0-500**; **0** hides completed tasks. Saving reloads the integration. Existing installations use 100 automatically after updating; no account setup is needed again.
+Open **Settings → Devices & services → Google Tasks with Times → Configure** (Options) to change **Maximum completed tasks per list**. Choose **0–500**; **0** hides completed tasks. Saving reloads the integration.
 
-This limits the items exposed to Home Assistant, including to-do actions and the browser. It never deletes Google tasks. The entity's `completed_tasks_hidden` attribute reports how many completed items were omitted. Older completed tasks remain accessible in Google Tasks; if reopened there, they return to Home Assistant as active tasks, including their restored time when available.
+The limit applies to both the to-do page and to-do actions. It does not delete anything from Google Tasks. Older completed tasks remain available in Google Tasks; reopening one there makes it active and visible in Home Assistant again. The entity's `completed_tasks_hidden` attribute reports the number omitted.
 
-The integration still reads all API pages to preserve every active task and identify the newest completions correctly. The limit reduces the displayed history, not the Google API requests. Converted to-do items are cached until the next refresh.
+Completed tasks display their due date without a time. Completing a task preserves its schedule; reopening it lets its time appear again after refresh. Reopen a task before changing its schedule.
 
-## Development
+## Updates and limitations
 
-Use Linux and Python **3.14.2+** (the Home Assistant runtime requirement):
+- Lists refresh every **30 minutes** and after changes made through this integration. Use `homeassistant.update_entity` to request a refresh sooner.
+- Subtasks are not displayed.
+- Recurring tasks can be displayed and completed, but their schedules cannot be changed through this integration.
+- Time support uses an undocumented Google API, which may change or become unavailable. An active task whose time cannot be verified remains visible with its due date. Its schedule cannot be edited until verification succeeds, but ordinary content and completion edits remain available. The `tasks_with_unverified_times` attribute reports affected active tasks.
+- An error or timeout can occur after part of a change has reached Google. Refresh and check the task before repeating the action, especially when creating a task.
 
-```console
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements_test.txt
-ruff check .
-ruff format --check .
-pytest
-python scripts/package.py
-```
+## Credentials and privacy
 
-The test harness is the official `pytest-homeassistant` matching Home Assistant 2026.11.0. Tests use synthetic accounts and sanitized protocol fixtures with external network access disabled. CI also runs Home Assistant's integration validator and the repository compatibility validator. Do not commit raw HAR files, APKs, credentials or generated archives; these are ignored by Git.
+Task-time access requires an **Android master token**, a powerful Google account credential. Treat it as a password. Submit credentials only through your trusted HTTPS Home Assistant address, and protect your Home Assistant storage and backups. Credentials are stored locally with the integration configuration and are not separately encrypted by this integration.
 
-The neutral icon source is `assets/icon.svg`. Run `python scripts/render_brand.py` in the test environment to regenerate the local 256px and 512px brand images.
+Never share master tokens, OAuth secrets, cookies or raw browser network captures in issue reports. Integration diagnostics contain counts and status information without task titles, account identifiers or credentials.
 
-## Credits and license
+Removing this integration does not delete Google tasks or revoke its Google account credentials. Manage account access separately in your Google account settings.
 
-Derived from [Home Assistant Core's Google Tasks integration](https://github.com/home-assistant/core/tree/2026.11.0/homeassistant/components/google_tasks), licensed under Apache 2.0. The public transport is adapted to Home Assistant's asynchronous HTTP session. See [NOTICE](NOTICE) and [LICENSE](LICENSE).
+## Help
 
-Private API research started from [magic-apps' Google Tasks notes](https://github.com/alxhslm/magic-apps/blob/main/docs/magical/google-tasks.md) and was verified using independently captured Calendar and Tasks requests. No raw captures or account data are distributed here.
+For setup or task-time problems, check Home Assistant's logs and [open an issue](https://github.com/CU-Jon/HA-GTasks/issues). Include your Home Assistant version, integration version, the error message and steps to reproduce. Review any attached logs or screenshots for personal information before sharing them.
+
+## License
+
+[Apache 2.0](LICENSE). See [NOTICE](NOTICE) for third-party attribution.
