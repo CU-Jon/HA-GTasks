@@ -18,9 +18,14 @@ Google's public Tasks API discards times. This integration uses normal Google OA
 ## Installation
 
 <!-- ha-marketplace:exclude-start -->
+
 ### Marketplace / HACS
 
-Once this repository is public and has a release, add `https://github.com/CU-Jon/HA-GTasks` as a custom **Integration** repository in Home Assistant's Marketplace (or HACS). Download **Google Tasks with Times** and restart Home Assistant. This repository is not automatically included in the default catalog.
+[![Open Google Tasks with Times in your Home Assistant Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=CU-Jon&repository=HA-GTasks&category=integration)
+
+Select the button to open this repository in your Home Assistant Marketplace. If prompted, approve adding it as a custom repository. Install **Google Tasks with Times**, follow any restart prompt, then continue with [Setup](#setup).
+
+For HACS, you can also add `https://github.com/CU-Jon/HA-GTasks` under **Custom repositories**, choose **Integration**, and download **Google Tasks with Times**.
 
 ### Manual installation
 
