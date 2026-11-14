@@ -1,0 +1,16 @@
+.venv/
+.tools/
+.local/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+*.har
+*.apk
+*credentials*.json
+*token*.json
+.env
+.env.*

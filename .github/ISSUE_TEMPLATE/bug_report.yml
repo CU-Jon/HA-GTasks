@@ -1,0 +1,21 @@
+name: Bug report
+description: Report a problem without exposing account data.
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Home Assistant and integration versions
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include expected behavior and steps to reproduce. Do not include credentials, task contents, raw HARs, or HTTP captures.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Safe error message or integration diagnostics
+      description: Inspect anything you attach and remove personal information.

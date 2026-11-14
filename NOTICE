@@ -1,0 +1,11 @@
+Google Tasks with Times
+
+This product includes software adapted from Home Assistant Core's Google Tasks
+integration, version 2026.11.0, copyright the Home Assistant authors and
+contributors, licensed under the Apache License, Version 2.0.
+
+Upstream: https://github.com/home-assistant/core/tree/2026.11.0/homeassistant/components/google_tasks
+
+Adaptations include native due-time authentication and scheduling, an asynchronous
+public API transport, a shared account coordinator, extended configuration and
+reconfiguration flows, and date-time support in the To-do entity.

@@ -1,0 +1,88 @@
+{
+  "title": "Google Tasks with Times",
+  "application_credentials": {
+    "description": "Create a Google Cloud OAuth Web application following the [setup guide]({more_info_url}). Enable the Tasks API, configure the [consent screen]({oauth_consent_url}), and create a client under [Credentials]({oauth_creds_url}). Use {redirect_uri} as the authorized redirect URI."
+  },
+  "config": {
+    "step": {
+      "auth": {
+        "title": "Link Google account"
+      },
+      "pick_implementation": {
+        "title": "Choose application credentials",
+        "data": {
+          "implementation": "Application credentials"
+        }
+      },
+      "native": {
+        "title": "Enable task times",
+        "description": "Enter an existing Android master token and its matching device ID for the Google account you linked. When updating credentials, leave the master token blank to retain the stored value. For guided token acquisition, go back and choose guided Google sign-in. See the [setup guide]({setup_url}).",
+        "data": {
+          "email": "Google email",
+          "master_token": "Android master token",
+          "device_id": "Device ID"
+        },
+        "data_description": {
+          "master_token": "Stored locally in Home Assistant. Never share this token in logs or issue reports.",
+          "device_id": "16 hexadecimal characters matching the token exchange."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect Google Tasks",
+        "description": "Reconnect the same Google account, then verify the native credentials."
+      },
+      "native_setup": {
+        "title": "Set up task times",
+        "description": "Choose guided sign-in to have Home Assistant generate the device ID and obtain the master token. You can also use credentials you already have.",
+        "menu_options": {
+          "browser_signin": "Obtain a token with guided Google sign-in",
+          "native": "Use an existing master token"
+        }
+      },
+      "browser_signin": {
+        "title": "Sign in to Google",
+        "description": "Use Chrome or Edge on a computer for these steps.\n\n1. Open [Google sign-in]({signin_url}) in a separate tab.\n2. Sign in to the same Google account you just linked, including any two-step verification.\n3. Select **I agree** if Google asks. A loading screen that keeps spinning is expected; continue anyway.\n4. Keep the Google tab open, return here, and select **Submit** for instructions to copy the temporary sign-in cookie.\n\nYour Google password stays on Google's website. Home Assistant cannot read cookies from the Google tab automatically."
+      },
+      "browser_token": {
+        "title": "Copy the temporary sign-in cookie",
+        "description": "In the Google tab:\n\n1. Press **F12** (or open the browser's Developer Tools).\n2. Select **Application**; it may be under the **\u00bb** menu.\n3. Under **Storage \u2192 Cookies**, select **{cookie_origin}**.\n4. Find the cookie named **oauth_token** and copy only its **Value**. If it is missing, complete the Google sign-in and consent steps again.\n5. Return to this trusted Home Assistant page, confirm the Google email, paste the value below, and select **Submit** promptly.\n\nHome Assistant will generate a device ID, exchange this temporary cookie for a master token, and verify the account. It stores only the resulting credentials, not the temporary cookie. No terminal or separate helper is needed. Use your trusted HTTPS Home Assistant address when submitting credentials.",
+        "data": {
+          "email": "Google email",
+          "oauth_token": "Temporary oauth_token cookie value"
+        },
+        "data_description": {
+          "oauth_token": "Copy the Value of oauth_token only. Do not paste your Google password, all cookies, or a HAR file."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Google rejected the native credentials. Verify the email, master token and matching device ID.",
+      "invalid_device_id": "Enter exactly 16 hexadecimal characters.",
+      "cannot_connect": "Could not read Google Tasks. Try again later.",
+      "wrong_account": "Use native credentials for the same Google account you authorized.",
+      "invalid_browser_token": "Google rejected the temporary cookie or native authorization. Repeat Google sign-in to obtain a fresh oauth_token value, then submit it promptly.",
+      "wrong_account_browser": "These credentials do not match the linked Google account. Sign in to the correct account and copy a fresh oauth_token value.",
+      "browser_cannot_connect": "Could not finish exchanging or verifying the token. The temporary cookie may have been consumed. Try again with a fresh oauth_token value."
+    },
+    "abort": {
+      "already_configured": "This Google account is already configured.",
+      "wrong_account": "Reconnect the Google account already linked to this integration.",
+      "access_not_configured": "Google OAuth or Tasks API access was rejected. Enable the Tasks API in your OAuth project and grant the requested permissions.",
+      "cannot_connect": "Could not contact Google Tasks.",
+      "reauth_successful": "Google Tasks was reconnected.",
+      "reconfigure_successful": "Native credentials were updated.",
+      "missing_configuration": "Create Google application credentials first.",
+      "missing_credentials": "Application credentials are missing.",
+      "oauth_error": "Google returned an invalid OAuth token.",
+      "oauth_failed": "Google authorization failed.",
+      "oauth_unauthorized": "Google authorization was denied.",
+      "oauth_timeout": "Google authorization timed out.",
+      "user_rejected_authorize": "Google authorization was declined: {error}",
+      "authorize_url_timeout": "Timed out starting Google authorization.",
+      "no_url_available": "Configure a Home Assistant URL before authorizing. See {docs_url}."
+    },
+    "create_entry": {
+      "default": "Google Tasks with Times is connected."
+    }
+  }
+}

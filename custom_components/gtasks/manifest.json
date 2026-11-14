@@ -1,0 +1,15 @@
+{
+  "domain": "gtasks",
+  "name": "Google Tasks with Times",
+  "categories": ["productivity_information.calendars_todos"],
+  "codeowners": ["@CU-Jon"],
+  "config_flow": true,
+  "connectivity": ["cloud"],
+  "dependencies": ["application_credentials"],
+  "documentation": "https://github.com/CU-Jon/HA-GTasks",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/CU-Jon/HA-GTasks/issues",
+  "requirements": ["gpsoauth==3.0.0"],
+  "version": "0.1.0"
+}
