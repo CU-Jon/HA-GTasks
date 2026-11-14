@@ -5,6 +5,7 @@ import re
 import secrets
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 import probatio
@@ -23,7 +24,7 @@ from .const import (
     OAUTH2_SCOPES,
     TASKS_URL,
 )
-from .exceptions import NativeAuthError, TasksError, WrongAccount
+from .exceptions import AccountVerificationError, NativeAuthError, TasksError, WrongAccount
 from .native import NativeClient, obtain_master_token
 
 _LOGGER = logging.getLogger(__name__)
@@ -182,7 +183,72 @@ class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, doma
             data[CONF_MASTER_TOKEN],
             data[CONF_DEVICE_ID],
         )
-        await native.check_account(await native.read(), self._lists)
+        snapshot = await native.read()
+        try:
+            await native.check_account(snapshot, self._lists)
+            return
+        except AccountVerificationError:
+            pass
+        # OAuth is known to work with the public API. The Android token is used
+        # only with Sync, never as a public Tasks credential.
+        tasks = {}
+        oauth_access = self._oauth_data[CONF_TOKEN][CONF_ACCESS_TOKEN]
+        for list_id in self._lists:
+            tasks[list_id] = []
+            page, seen = None, set()
+            while True:
+                params = {
+                    "maxResults": 100,
+                    "showCompleted": "true",
+                    "showHidden": "true",
+                    "fields": "items/id,nextPageToken",
+                    **({"pageToken": page} if page else {}),
+                }
+                try:
+                    async with async_get_clientsession(self.hass).get(
+                        TASKS_URL + f"/lists/{quote(list_id, safe='')}/tasks",
+                        params=params,
+                        headers={"Authorization": f"Bearer {oauth_access}"},
+                        timeout=aiohttp.ClientTimeout(total=NETWORK_TIMEOUT),
+                        allow_redirects=False,
+                    ) as response:
+                        if response.status != 200:
+                            raise AccountVerificationError(
+                                "OAuth could not read tasks for verification."
+                            )
+                        data = await response.json()
+                    tasks[list_id].extend(item["id"] for item in data.get("items", []))
+                    try:
+                        await native.check_account(snapshot, self._lists, tasks)
+                        return
+                    except AccountVerificationError:
+                        pass
+                    page = data.get("nextPageToken")
+                    if not page:
+                        break
+                    if not isinstance(page, str) or page in seen:
+                        raise ValueError
+                    seen.add(page)
+                except (
+                    aiohttp.ClientError,
+                    TimeoutError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                ):
+                    raise AccountVerificationError(
+                        "OAuth task verification was unavailable."
+                    ) from None
+        _LOGGER.warning(
+            "OAuth task account verification unavailable: oauth_lists=%d oauth_tasks=%d "
+            "native_lists=%d native_tasks=%d",
+            len(self._lists),
+            sum(len(ids) for ids in tasks.values()),
+            len(snapshot.list_ids),
+            len(snapshot.tasks),
+        )
+        await native.check_account(snapshot, self._lists, tasks)
 
     def _finish_native(self, native_data):
         data = {**self._oauth_data, **native_data, CONF_ACCOUNT_ID: self._info["id"]}

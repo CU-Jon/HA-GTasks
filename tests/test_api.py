@@ -39,7 +39,8 @@ async def api(hass, aioclient_mock):
     native = MagicMock()
     native.read = AsyncMock(return_value=snapshot())
     native.check_account = AsyncMock()
-    native.find = NativeClient.find
+    native._list_aliases = {}
+    native.find = NativeClient.find.__get__(native, NativeClient)
     native.set_schedule = AsyncMock()
     return TasksApi(async_get_clientsession(hass), oauth, native, "America/New_York")
 

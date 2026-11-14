@@ -147,3 +147,37 @@ async def test_verification_retry_does_not_reexchange_cookie(hass, credentials, 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["master_token"] == "pending-test-master"
     exchange.assert_called_once()
+
+
+async def test_default_list_verification_uses_oauth_only_for_public_api(
+    hass, credentials, oauth_info, aioclient_mock
+):
+    from custom_components.gtasks.const import SYNC_URL, TASKS_URL
+    from custom_components.gtasks.native import public_id
+
+    from .conftest import LIST_ID
+    from .test_protocol import CAPTURE
+
+    result = await start_guided(hass, credentials)
+    aioclient_mock.post(SYNC_URL, json=CAPTURE["sources"]["tasks"]["noon"]["response"])
+    aioclient_mock.get(
+        TASKS_URL + f"/lists/{LIST_ID}/tasks",
+        json={"items": [{"id": public_id("private-test-task")}]},
+    )
+    with (
+        patch(
+            "custom_components.gtasks.config_flow.obtain_master_token", return_value="test-master"
+        ),
+        patch(
+            "custom_components.gtasks.native.exchange_token",
+            return_value=("native-scoped-token", 600),
+        ),
+        patch("custom_components.gtasks.async_setup_entry", new_callable=AsyncMock),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], COOKIE)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    for _method, url, _body, headers in aioclient_mock.mock_calls:
+        if str(url).startswith(TASKS_URL):
+            assert headers["Authorization"] == "Bearer fake-access"
+        elif str(url) == SYNC_URL:
+            assert headers["Authorization"] == "Bearer native-scoped-token"

@@ -11,13 +11,12 @@ import aiohttp
 import gpsoauth
 import requests
 
-from .const import NETWORK_TIMEOUT, SYNC_URL, TASKS_APP, TASKS_CERT, TASKS_SCOPE, TASKS_URL
+from .const import NETWORK_TIMEOUT, SYNC_URL, TASKS_APP, TASKS_CERT, TASKS_SCOPE
 from .exceptions import (
     AccountVerificationError,
     NativeAuthError,
     OutcomeUnknown,
     TasksError,
-    WrongAccount,
 )
 from .protocol import (
     ProtocolError,
@@ -152,6 +151,7 @@ class NativeClient:
         self._token = None
         self._expires = 0.0
         self._blocked_until = 0.0
+        self._list_aliases = {}
 
     async def _access_token(self):
         if self._token and time.monotonic() < self._expires:
@@ -219,73 +219,60 @@ class NativeClient:
                 "Private list identifiers could not establish account identity."
             )
 
-    async def check_account(self, snapshot: Snapshot, public_lists):
-        """Use identical public IDs when private identifiers cannot establish a match."""
+    async def check_account(self, snapshot: Snapshot, public_lists, public_tasks=None):
+        """Bind list identifiers using independent OAuth task membership evidence."""
         expected = set(public_lists)
-        try:
-            self.validate_account(snapshot, expected)
-            return
-        except AccountVerificationError:
+        aliases = {}
+        for list_id in expected:
+            candidates = {list_id}
+            try:
+                candidates.add(private_id(list_id))
+            except TasksError:
+                pass
+            matches = snapshot.list_ids.intersection(candidates)
+            if len(matches) == 1:
+                aliases[list_id] = next(iter(matches))
+        for list_id, tasks in (public_tasks or {}).items():
+            if list_id not in expected:
+                raise AccountVerificationError("Unexpected public task list in verification data.")
+            for task_id in tasks:
+                candidates = {task_id}
+                try:
+                    candidates.add(private_id(task_id))
+                except TasksError:
+                    pass
+                records = [snapshot.tasks[key] for key in candidates if key in snapshot.tasks]
+                if len(records) > 1:
+                    raise AccountVerificationError("Ambiguous native task identifier.")
+                if not records or not records[0].list_id:
+                    continue
+                native_list = records[0].list_id
+                if list_id in aliases and aliases[list_id] != native_list:
+                    raise AccountVerificationError("Conflicting native task-list membership.")
+                aliases[list_id] = native_list
+        if not aliases:
             _LOGGER.debug(
-                "Checking account through public Tasks API: "
-                "oauth_lists=%d native_lists=%d native_tasks=%d",
+                "Account verification needs OAuth task evidence: oauth_lists=%d "
+                "oauth_tasks=%d native_lists=%d native_tasks=%d",
                 len(expected),
+                sum(len(ids) for ids in (public_tasks or {}).values()),
                 len(snapshot.list_ids),
                 len(snapshot.tasks),
             )
-        if not expected:
-            raise AccountVerificationError("OAuth returned no task lists to verify.")
-        token = await self._access_token()
-        seen = set()
-        page = None
-        found = set()
-        try:
-            while True:
-                async with self.session.get(
-                    TASKS_URL + "/users/@me/lists",
-                    params={"maxResults": 100, **({"pageToken": page} if page else {})},
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=aiohttp.ClientTimeout(total=NETWORK_TIMEOUT),
-                    allow_redirects=False,
-                ) as response:
-                    if response.status != 200:
-                        _LOGGER.warning(
-                            "Native account verification unavailable: HTTP %d; "
-                            "oauth_lists=%d native_lists=%d native_tasks=%d",
-                            response.status,
-                            len(expected),
-                            len(snapshot.list_ids),
-                            len(snapshot.tasks),
-                        )
-                        raise AccountVerificationError(
-                            "Google could not verify native account access."
-                        )
-                    data = await response.json()
-                if not isinstance(data, dict) or not isinstance(data.get("items", []), list):
-                    raise ValueError
-                found.update(item["id"] for item in data.get("items", []))
-                if found.intersection(expected):
-                    return
-                page = data.get("nextPageToken")
-                if not page:
-                    break
-                if not isinstance(page, str) or page in seen:
-                    raise ValueError
-                seen.add(page)
-        except aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError:
             raise AccountVerificationError(
-                "Could not read task lists for account verification."
-            ) from None
-        if not found:
-            raise AccountVerificationError("Native authorization returned no task lists to verify.")
-        raise WrongAccount("The native token's task lists belong to a different Google account.")
+                "Could not match tasks read through OAuth to native Tasks."
+            )
+        if len(set(aliases.values())) != len(aliases):
+            raise AccountVerificationError("Ambiguous native task-list membership.")
+        self._list_aliases = aliases
 
     async def read(self):
         return await self._post(sync_read_body())
 
-    @staticmethod
-    def find(snapshot, task_id, list_id):
+    def find(self, snapshot, task_id, list_id):
         task_ids, list_ids = {task_id}, {list_id}
+        if list_id in self._list_aliases:
+            list_ids.add(self._list_aliases[list_id])
         for value, candidates in ((task_id, task_ids), (list_id, list_ids)):
             try:
                 candidates.add(private_id(value))

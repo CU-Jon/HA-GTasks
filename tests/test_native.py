@@ -12,7 +12,6 @@ from custom_components.gtasks.exceptions import (
     NativeAuthError,
     OutcomeUnknown,
     TasksError,
-    WrongAccount,
 )
 from custom_components.gtasks.native import NativeClient, schedule_for_due
 from custom_components.gtasks.protocol import Snapshot
@@ -41,77 +40,58 @@ def test_wrong_account(native):
     native.validate_account(snapshot(), [LIST_ID])
 
 
-async def test_renamed_default_list_verified_with_public_ids(native, aioclient_mock):
-    from custom_components.gtasks.const import TASKS_URL
-
-    native._access_token = AsyncMock(return_value="fake-token")
-    aioclient_mock.get(
-        TASKS_URL + "/users/@me/lists",
-        json={"items": [{"id": LIST_ID, "title": "Renamed default list"}]},
-    )
-    await native.check_account(
-        Snapshot({}, None, frozenset({"different-private-representation"})), [LIST_ID]
-    )
-    assert aioclient_mock.call_count == 1
+async def test_default_list_bound_by_exact_oauth_task(native, aioclient_mock):
+    current = snapshot()
+    record = replace(current.tasks["test-task"], list_id="legacy-web-list")
+    current = Snapshot({"test-task": record}, None, frozenset({"legacy-web-list"}))
+    await native.check_account(current, [LIST_ID], {LIST_ID: [TASK_ID]})
+    assert native.find(current, TASK_ID, LIST_ID) == record
+    assert aioclient_mock.call_count == 0
+    with pytest.raises(TasksError):
+        native.find(current, TASK_ID, "foreign-list")
 
 
-async def test_public_account_actually_mismatched(native, aioclient_mock):
-    from custom_components.gtasks.const import TASKS_URL
-
-    native._access_token = AsyncMock(return_value="fake-token")
-    aioclient_mock.get(
-        TASKS_URL + "/users/@me/lists", json={"items": [{"id": "other-account-list"}]}
-    )
-    with pytest.raises(WrongAccount):
-        await native.check_account(Snapshot({}, None), [LIST_ID])
-
-
-@pytest.mark.parametrize("status", [401, 403, 429, 503])
-async def test_unavailable_verification_is_not_wrong_account(
-    native, aioclient_mock, status, caplog
-):
-    from custom_components.gtasks.const import TASKS_URL
-
-    native._access_token = AsyncMock(return_value="fake-token")
-    aioclient_mock.get(
-        TASKS_URL + "/users/@me/lists", status=status, text="sensitive-provider-body"
-    )
+async def test_unrelated_tasks_cannot_bind_account(native, aioclient_mock):
     with pytest.raises(AccountVerificationError):
-        await native.check_account(Snapshot({}, None), [LIST_ID])
-    assert "sensitive-provider-body" not in caplog.text
-    assert "fake-token" not in caplog.text
+        await native.check_account(snapshot(), ["foreign-list"], {"foreign-list": ["foreign-task"]})
+    assert aioclient_mock.call_count == 0
+
+
+async def test_conflicting_task_membership_refused(native):
+    current = snapshot()
+    record = current.tasks["test-task"]
+    current = Snapshot(
+        {
+            "test-task": record,
+            "other-task": replace(record, task_id="other-task", list_id="other-list"),
+        },
+        None,
+    )
+    from custom_components.gtasks.native import public_id
+
+    with pytest.raises(AccountVerificationError):
+        await native.check_account(
+            current, [LIST_ID], {LIST_ID: [TASK_ID, public_id("other-task")]}
+        )
+
+
+async def test_default_list_alias_survives_fresh_schedule_reads(native):
+    before = snapshot()
+    record = replace(before.tasks["test-task"], list_id="legacy-default-list")
+    before = Snapshot({"test-task": record}, None, frozenset({"legacy-default-list"}))
+    await native.check_account(before, [LIST_ID], {LIST_ID: [TASK_ID]})
+    desired = schedule_for_due(DUE.replace(minute=45), "America/New_York")
+    after = Snapshot({"test-task": replace(record, schedule_wire=[desired.wire()])}, None)
+    native.read = AsyncMock(side_effect=[before, after])
+    native._post = AsyncMock()
+    with patch("custom_components.gtasks.native.asyncio.sleep", new_callable=AsyncMock):
+        await native.set_schedule(LIST_ID, TASK_ID, desired)
+    native._post.assert_awaited_once()
 
 
 async def test_private_id_match_needs_no_extra_request(native, aioclient_mock):
     await native.check_account(snapshot(), [LIST_ID])
     assert aioclient_mock.call_count == 0
-
-
-async def test_empty_public_response_cannot_prove_wrong_account(native, aioclient_mock):
-    from custom_components.gtasks.const import TASKS_URL
-
-    native._access_token = AsyncMock(return_value="fake-token")
-    aioclient_mock.get(TASKS_URL + "/users/@me/lists", json={})
-    with pytest.raises(AccountVerificationError):
-        await native.check_account(Snapshot({}, None), [LIST_ID])
-
-
-async def test_verification_checks_later_pages(native, aioclient_mock):
-    from custom_components.gtasks.const import TASKS_URL
-
-    native._access_token = AsyncMock(return_value="fake-token")
-    aioclient_mock.get(
-        TASKS_URL + "/users/@me/lists",
-        params={"maxResults": 100, "pageToken": "next"},
-        json={"items": [{"id": LIST_ID}]},
-    )
-    aioclient_mock.get(
-        TASKS_URL + "/users/@me/lists",
-        params={"maxResults": 100},
-        json={"items": [{"id": "another-list"}], "nextPageToken": "next"},
-    )
-    await native.check_account(Snapshot({}, None), [LIST_ID])
-    assert aioclient_mock.call_count == 2
 
 
 def test_direct_public_identifiers(native):
